@@ -175,7 +175,77 @@
     ```
 
 ---
+#### Блок 6 : Higher-order functions
 
+**`tests/16_forecast.f`**
+```lisp
+(func forecast (f time value) 
+	(cond (equal 0 time) value (forecast f (minus time 1) (f value)))
+)
+(forecast (lambda (x) (times 2 x)) 10 1)
+```
+**`tests/16_forecast.out`**
+```text
+1024
+```
+(tail-recursive function, `forecast` function takes function as an argument)
+
+**`tests/17_map.f`**
+```lisp
+(func map (f lst) 
+	(cond (isnull lst) null (cons (f (head lst)) (map f (tail lst))))
+)
+(map (lambda (x) (plus 1 x)) '(1 2 3 4))
+```
+**`tests/17_map.out`**
+```text
+'(2 3 4 5)
+```
+(not tail recursive, `map` takes function as an argument)
+
+
+**`tests/18_wrap.f`**
+```lisp
+(func wrap (f g) 
+	(lambda (x) (f (g x)))
+)
+((wrap (lambda (x) (plus 2 x)) (lambda (x) (times 2 x))) 2)
+```
+**`tests/18_wrap.out`**
+```text
+6
+```
+(`wrap` returns a function combined out of 2 given functions)
+
+**`tests/19_partially_applied.f`**
+```lisp
+(func make-adder (n) 
+    (lambda (x) (plus x n))
+)
+
+(setq add5 (make-adder 5))
+(setq add10 (make-adder 10))
+
+(add5 3)
+(add10 7)
+
+(func multiply-by (a)
+    (lambda (b)
+        (lambda (c) (times (times a b) c))
+    )
+)
+
+(((multiply-by 2) 3) 4)
+```
+
+**`19_partially_applied.out`**
+```text
+8
+17
+24
+```
+
+---
 ### 3. Как этот тестовый набор исполняется (Автоматизация)
 
 Тестирование компиляторов не запускается руками. Для этого пишется скрипт (например, на Bash или Python), который обходит папку `tests/`:
