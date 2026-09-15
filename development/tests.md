@@ -219,23 +219,23 @@
 
 **`tests/19_partially_applied.f`**
 ```lisp
-(func make-adder (n) 
+(func makeAdder (n) 
     (lambda (x) (plus x n))
 )
 
-(setq add5 (make-adder 5))
-(setq add10 (make-adder 10))
+(setq add5 (makeAdder 5))
+(setq add10 (makeAdder 10))
 
 (add5 3)
 (add10 7)
 
-(func multiply-by (a)
+(func multiplyBy (a)
     (lambda (b)
         (lambda (c) (times (times a b) c))
     )
 )
 
-(((multiply-by 2) 3) 4)
+(((multiplyBy 2) 3) 4)
 ```
 
 **`19_partially_applied.out`**
