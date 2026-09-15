@@ -9,9 +9,7 @@
 #include <cstddef>
 #include <stdexcept>
 
-// ==========================================
 // Token Definitions
-// ==========================================
 
 enum class TokenType {
     // Single-character tokens
@@ -38,10 +36,7 @@ struct Token {
         : type(type), lexeme(std::move(lexeme)), literal(literal), line(line), column(column) {}
 };
 
-// ==========================================
 // Lexer Class
-// ==========================================
-
 class Lexer {
 public:
     explicit Lexer(std::string source) : source(std::move(source)) {}
@@ -70,7 +65,7 @@ private:
     // Map for keywords that have specific literal types.
     static const std::unordered_map<std::string, TokenType> keywords;
 
-    // --- Helper Methods ---
+    //Helper Methods
 
     bool isAtEnd() const { return current >= source.length(); }
 
