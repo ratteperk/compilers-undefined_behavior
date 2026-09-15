@@ -258,9 +258,7 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
     {"null",  TokenType::NULL_LITERAL}
 };
 
-// ==========================================
 // Helper to print tokens for debugging
-// ==========================================
 std::string tokenTypeToString(TokenType type) {
     switch (type) {
         case TokenType::LEFT_PAREN: return "LEFT_PAREN";
