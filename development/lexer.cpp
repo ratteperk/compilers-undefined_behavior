@@ -25,8 +25,6 @@ enum class TokenType {
 };
 
 // Using std::variant to hold the actual parsed value of the literal.
-// Integers are stored as long long: the grammar puts no bound on Integer,
-// so the widest built-in type keeps more programs representable.
 using TokenLiteral = std::variant<long long, double, bool, std::monostate>;
 
 struct Token {
@@ -65,14 +63,11 @@ private:
     std::vector<Token> tokens;
     std::size_t start = 0;
     std::size_t current = 0;
-    std::size_t lineStart = 0;   // byte offset of the first character of `line`
+    std::size_t lineStart = 0;
     int line = 1;
     bool errorFlag = false;
 
     // Map for keywords that have specific literal types.
-    // Special-form keywords (quote, setq, func, ...) are deliberately absent:
-    // the spec (p. 4) makes a name special only in head-of-list position, so
-    // telling them apart is the parser's job, not the lexer's.
     static const std::unordered_map<std::string, TokenType> keywords;
 
     // --- Helper Methods ---
@@ -108,24 +103,16 @@ private:
         tokens.emplace_back(type, text, literal, line, columnOf(start));
     }
 
-    // Grammar: Letter : Any Unicode character that represents a letter.
-    // The source is handled as raw UTF-8 bytes, so every non-ASCII byte
-    // (lead byte or continuation) is accepted as part of a letter. This admits
-    // a few non-letter code points that full Unicode classification would
-    // reject, but it keeps identifiers such as `переменная` intact without
-    // pulling in ICU.
     bool isAlpha(char c) const {
-        unsigned char uc = static_cast<unsigned char>(c);
-        return (uc >= 'a' && uc <= 'z') || (uc >= 'A' && uc <= 'Z') || uc >= 0x80;
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
     }
+
+    bool isNonAscii(char c) const { return static_cast<unsigned char>(c) >= 0x80; }
 
     bool isDigit(char c) const { return c >= '0' && c <= '9'; }
 
     bool isAlphaNumeric(char c) const { return isAlpha(c) || isDigit(c); }
 
-    // Elements are "separated by whitespaces and enclosed by parentheses"
-    // (spec, p. 1). Anything else directly after a literal or an identifier
-    // means two elements were glued together.
     bool isDelimiter(char c) const {
         return c == '\0' || c == '(' || c == ')' || c == '\'' || c == '/' ||
                c == ' ' || c == '\t' || c == '\r' || c == '\n';
@@ -176,20 +163,23 @@ private:
 
             default:
                 if (isAlpha(c)) {
-                    // We already advanced past the first letter, but `start` is still
-                    // at the beginning of the identifier, so scanIdentifier() will
-                    // correctly grab the rest of it.
                     scanIdentifier();
+                } else if (isNonAscii(c)) {
+                    scanNonAscii();
                 } else {
-                    error(std::string("Unexpected character '") + c + "'.");
+                    while (!isAtEnd() && !isDelimiter(peek())) advance();
+                    std::string run = source.substr(start, current - start);
+                    if (run.length() == 1) {
+                        error("Unexpected character '" + run + "'.");
+                    } else {
+                        error("Unexpected character '" + std::string(1, c) + "' in '" +
+                              run + "'.");
+                    }
                 }
                 break;
         }
     }
 
-    // Consumes a run of characters that should have been separated from the
-    // token just scanned. Reports one error for the whole run and drops it,
-    // rather than emitting a plausible-looking token stream for broken input.
     bool consumeIfGlued(const char* what) {
         if (isDelimiter(peek())) return false;
 
@@ -197,6 +187,12 @@ private:
         error(std::string("Malformed ") + what + " '" + source.substr(start, current - start) +
               "': elements must be separated by whitespace.");
         return true;
+    }
+
+    void scanNonAscii() {
+        while (!isAtEnd() && !isDelimiter(peek())) advance();
+        error("Non-ASCII character in '" + source.substr(start, current - start) +
+              "': identifiers must use ASCII letters A-Z and a-z.");
     }
 
     void scanNumber() {
@@ -300,11 +296,10 @@ void printToken(const Token& token) {
 }
 
 // ==========================================
-// Entry point
+// main (test)
 // ==========================================
 
-// Exit codes follow the sysexits.h convention also used by the reference
-// implementations: 64 usage, 65 bad input data, 66 unreadable input file.
+// implementations exit code: 64 usage, 65 bad input data, 66 unreadable input file.
 static const int EX_USAGE   = 64;
 static const int EX_DATAERR = 65;
 static const int EX_NOINPUT = 66;

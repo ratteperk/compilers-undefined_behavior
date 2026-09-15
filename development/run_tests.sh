@@ -5,10 +5,6 @@
 #   ./run_tests.sh ./f_interpreter
 #                               interpreter mode: stdout is diffed against tests/*.out,
 #                               and *.err tests only have to exit non-zero
-#
-# Lexer mode is the default because the interpreter does not exist yet. The
-# .out files describe what the finished interpreter must print, so they cannot
-# be checked against the lexer.
 
 set -uo pipefail
 cd "$(dirname "$0")"
