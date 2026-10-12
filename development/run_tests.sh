@@ -2,6 +2,8 @@
 # Test runner for Project F.
 #
 #   ./run_tests.sh              lexer mode: every tests/*.f must tokenize without errors
+#   ./run_tests.sh --parser     parser mode: every tests/*.f must also parse and pass
+#                               the special-form shape checks
 #   ./run_tests.sh ./f_interpreter
 #                               interpreter mode: stdout is diffed against tests/*.out,
 #                               and *.err tests only have to exit non-zero
@@ -11,6 +13,11 @@ cd "$(dirname "$0")"
 
 TESTS_DIR="tests"
 INTERPRETER="${1:-}"
+PARSER_MODE=0
+if [[ "$INTERPRETER" == "--parser" ]]; then
+    PARSER_MODE=1
+    INTERPRETER=""
+fi
 pass=0
 fail=0
 
@@ -20,6 +27,12 @@ if [[ -n "$INTERPRETER" ]]; then
         echo "Error: '$INTERPRETER' is not executable." >&2
         exit 1
     fi
+elif [[ $PARSER_MODE -eq 1 ]]; then
+    mode="parser"
+    echo "Building parser..."
+    bison -d -o parser.cpp parser.y || exit 1
+    g++ -std=c++17 -O2 -o fparser parser.cpp || exit 1
+    BIN="./fparser"
 else
     mode="lexer"
     BIN="$(mktemp -d)/lexer"
@@ -36,14 +49,14 @@ for src in "$TESTS_DIR"/*.f; do
     expected_out="$TESTS_DIR/$name.out"
     expected_err="$TESTS_DIR/$name.err"
 
-    if [[ "$mode" == "lexer" ]]; then
+    if [[ "$mode" == "lexer" || "$mode" == "parser" ]]; then
         # The lexer only decides whether the source tokenizes. A test whose
         # failure is semantic (division by zero) still has to lex cleanly.
         if stderr="$("$BIN" "$src" 2>&1 >/dev/null)"; then
-            echo "PASS  $name (lexes)"
+            echo "PASS  $name ($mode)"
             ((pass++))
         else
-            echo "FAIL  $name (lexer errors)"
+            echo "FAIL  $name ($mode errors)"
             echo "$stderr" | sed 's/^/        /'
             ((fail++))
         fi
