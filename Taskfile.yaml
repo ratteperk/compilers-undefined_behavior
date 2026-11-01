@@ -1,0 +1,42 @@
+version: "3"
+
+vars:
+  CXX: g++
+  CXXFLAGS: -std=c++17 -Wall -Wextra -O2 -Isrc
+  BIN: fcompiler
+  SRC_DIR: src
+  TESTS_DIR: tests
+
+tasks:
+  default:
+    desc: Build the compiler executable
+    deps: [parser]
+    sources:
+      - "{{.SRC_DIR}}/**/*.cpp"
+      - "{{.SRC_DIR}}/**/*.hpp"
+      - "{{.SRC_DIR}}/parser.cpp"
+    generates:
+      - "{{.BIN}}"
+    cmds:
+      - "{{.CXX}} {{.CXXFLAGS}} -o {{.BIN}} {{.SRC_DIR}}/parser.cpp {{.SRC_DIR}}/ast.cpp {{.SRC_DIR}}/analyzer.cpp {{.SRC_DIR}}/optimizer.cpp {{.SRC_DIR}}/main.cpp"
+
+  parser:
+    desc: Generate parser from Bison grammar
+    sources:
+      - "{{.SRC_DIR}}/parser.y"
+    generates:
+      - "{{.SRC_DIR}}/parser.cpp"
+      - "{{.SRC_DIR}}/parser.hpp"
+    cmds:
+      - bison -d -o {{.SRC_DIR}}/parser.cpp {{.SRC_DIR}}/parser.y
+
+  test:
+    desc: Run test suite against compiler
+    deps: [default]
+    cmds:
+      - ./scripts/run_tests.sh ./{{.BIN}}
+
+  clean:
+    desc: Remove generated files and binaries
+    cmds:
+      - rm -f {{.BIN}} {{.SRC_DIR}}/parser.cpp {{.SRC_DIR}}/parser.hpp

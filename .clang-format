@@ -1,0 +1,63 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++17
+
+# Indentation and line width
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+
+# Braces and statements
+BreakBeforeBraces: Attach
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortLambdasOnASingleLine: Inline
+AllowShortEnumsOnASingleLine: false
+
+# Pointers and references
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Spacing and alignment
+SpaceBeforeParens: ControlStatements
+SpaceBeforeAssignmentOperators: true
+SpaceInEmptyBlock: false
+SpacesInAngles: Never
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignOperands: Align
+
+# Comments formatting
+ReflowComments: Never
+SpacesBeforeTrailingComments: 2
+AlignTrailingComments: true
+
+# Namespaces
+NamespaceIndentation: None
+FixNamespaceComments: true
+
+# Cleanliness
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+# Include sorting and grouping
+IncludeBlocks: Regroup
+SortIncludes:
+  Enabled: true
+  IgnoreCase: false
+
+IncludeCategories:
+  - Regex: '^"(ast|lexer|analyzer|optimizer)\.hpp"'
+    Priority: 1
+  - Regex: "^<.*>"
+    Priority: 2
+  - Regex: '^".*"'
+    Priority: 3
+...

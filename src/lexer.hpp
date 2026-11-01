@@ -1,24 +1,30 @@
 #pragma once
 
-#include <iostream>
-#include <fstream>
-#include <iterator>
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <variant>
 #include <cctype>
 #include <cstddef>
+#include <fstream>
+#include <iostream>
+#include <iterator>
 #include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
 
 // Token Definitions
 
 enum class TokenType {
     // Single-character tokens
-    LEFT_PAREN, RIGHT_PAREN, QUOTE,
+    LEFT_PAREN,
+    RIGHT_PAREN,
+    QUOTE,
 
     // Literals & Identifiers
-    IDENTIFIER, INTEGER, REAL, BOOLEAN, NULL_LITERAL,
+    IDENTIFIER,
+    INTEGER,
+    REAL,
+    BOOLEAN,
+    NULL_LITERAL,
 
     // End of file
     EOF_TOKEN
@@ -67,19 +73,21 @@ private:
     // Map for keywords that have specific literal types.
     static const std::unordered_map<std::string, TokenType> keywords;
 
-    //Helper Methods
+    // Helper Methods
 
     bool isAtEnd() const { return current >= source.length(); }
 
     char advance() { return source[current++]; }
 
     char peek() const {
-        if (isAtEnd()) return '\0';
+        if (isAtEnd())
+            return '\0';
         return source[current];
     }
 
     char peekNext() const {
-        if (current + 1 >= source.length()) return '\0';
+        if (current + 1 >= source.length())
+            return '\0';
         return source[current + 1];
     }
 
@@ -88,7 +96,8 @@ private:
     int columnOf(std::size_t pos) const {
         int col = 1;
         for (std::size_t i = lineStart; i < pos && i < source.length(); ++i) {
-            if ((static_cast<unsigned char>(source[i]) & 0xC0) != 0x80) col++;
+            if ((static_cast<unsigned char>(source[i]) & 0xC0) != 0x80)
+                col++;
         }
         return col;
     }
@@ -100,9 +109,7 @@ private:
         tokens.emplace_back(type, text, literal, line, columnOf(start));
     }
 
-    bool isAlpha(char c) const {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-    }
+    bool isAlpha(char c) const { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 
     bool isNonAscii(char c) const { return static_cast<unsigned char>(c) >= 0x80; }
 
@@ -111,8 +118,8 @@ private:
     bool isAlphaNumeric(char c) const { return isAlpha(c) || isDigit(c); }
 
     bool isDelimiter(char c) const {
-        return c == '\0' || c == '(' || c == ')' || c == '\'' || c == '/' ||
-               c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        return c == '\0' || c == '(' || c == ')' || c == '\'' || c == '/' || c == ' ' ||
+               c == '\t' || c == '\r' || c == '\n';
     }
 
     void error(const std::string& message) { error(columnOf(start), message); }
@@ -136,58 +143,68 @@ private:
 
         c = advance();
         switch (c) {
-            case '(': addToken(TokenType::LEFT_PAREN); break;
-            case ')': addToken(TokenType::RIGHT_PAREN); break;
-            case '\'': addToken(TokenType::QUOTE); break;
+        case '(':
+            addToken(TokenType::LEFT_PAREN);
+            break;
+        case ')':
+            addToken(TokenType::RIGHT_PAREN);
+            break;
+        case '\'':
+            addToken(TokenType::QUOTE);
+            break;
 
-            case '/':
-                if (peek() == '/') {
-                    while (peek() != '\n' && !isAtEnd()) advance();
+        case '/':
+            if (peek() == '/') {
+                while (peek() != '\n' && !isAtEnd())
+                    advance();
+            } else {
+                error("Unexpected character '/'.");
+            }
+            break;
+
+        case ' ':
+        case '\r':
+        case '\t':
+            break;
+
+        case '\n':
+            line++;
+            lineStart = current;
+            break;
+
+        default:
+            if (isAlpha(c)) {
+                scanIdentifier();
+            } else if (isNonAscii(c)) {
+                scanNonAscii();
+            } else {
+                while (!isAtEnd() && !isDelimiter(peek()))
+                    advance();
+                std::string run = source.substr(start, current - start);
+                if (run.length() == 1) {
+                    error("Unexpected character '" + run + "'.");
                 } else {
-                    error("Unexpected character '/'.");
+                    error("Unexpected character '" + std::string(1, c) + "' in '" + run + "'.");
                 }
-                break;
-
-            case ' ':
-            case '\r':
-            case '\t':
-                break;
-
-            case '\n':
-                line++;
-                lineStart = current;
-                break;
-
-            default:
-                if (isAlpha(c)) {
-                    scanIdentifier();
-                } else if (isNonAscii(c)) {
-                    scanNonAscii();
-                } else {
-                    while (!isAtEnd() && !isDelimiter(peek())) advance();
-                    std::string run = source.substr(start, current - start);
-                    if (run.length() == 1) {
-                        error("Unexpected character '" + run + "'.");
-                    } else {
-                        error("Unexpected character '" + std::string(1, c) + "' in '" +
-                              run + "'.");
-                    }
-                }
-                break;
+            }
+            break;
         }
     }
 
     bool consumeIfGlued(const char* what) {
-        if (isDelimiter(peek())) return false;
+        if (isDelimiter(peek()))
+            return false;
 
-        while (!isAtEnd() && !isDelimiter(peek())) advance();
+        while (!isAtEnd() && !isDelimiter(peek()))
+            advance();
         error(std::string("Malformed ") + what + " '" + source.substr(start, current - start) +
               "': elements must be separated by whitespace.");
         return true;
     }
 
     void scanNonAscii() {
-        while (!isAtEnd() && !isDelimiter(peek())) advance();
+        while (!isAtEnd() && !isDelimiter(peek()))
+            advance();
         error("Non-ASCII character in '" + source.substr(start, current - start) +
               "': identifiers must use ASCII letters A-Z and a-z.");
     }
@@ -204,18 +221,21 @@ private:
             return;
         }
 
-        while (isDigit(peek())) advance();
+        while (isDigit(peek()))
+            advance();
 
         // Look for a fractional part.
         // Grammar: Real : Integer . Integer (meaning "3." is invalid, must be "3.0")
         bool isReal = false;
         if (peek() == '.' && isDigit(peekNext())) {
             isReal = true;
-            advance(); // consume the '.'
-            while (isDigit(peek())) advance();
+            advance();  // consume the '.'
+            while (isDigit(peek()))
+                advance();
         }
 
-        if (consumeIfGlued("number literal")) return;
+        if (consumeIfGlued("number literal"))
+            return;
 
         std::string numStr = source.substr(start, current - start);
         try {
@@ -232,9 +252,11 @@ private:
     }
 
     void scanIdentifier() {
-        while (isAlphaNumeric(peek())) advance();
+        while (isAlphaNumeric(peek()))
+            advance();
 
-        if (consumeIfGlued("identifier")) return;
+        if (consumeIfGlued("identifier"))
+            return;
 
         std::string text = source.substr(start, current - start);
 
@@ -255,7 +277,4 @@ private:
 
 // Initialize static keywords map
 inline const std::unordered_map<std::string, TokenType> Lexer::keywords = {
-    {"true",  TokenType::BOOLEAN},
-    {"false", TokenType::BOOLEAN},
-    {"null",  TokenType::NULL_LITERAL}
-};
+    {"true", TokenType::BOOLEAN}, {"false", TokenType::BOOLEAN}, {"null", TokenType::NULL_LITERAL}};

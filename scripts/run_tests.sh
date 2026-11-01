@@ -29,9 +29,9 @@ if [[ -n "$INTERPRETER" ]]; then
     fi
 elif [[ $PARSER_MODE -eq 1 ]]; then
     mode="parser"
-    echo "Building parser..."
+    echo "Building parser & semantic analyzer..."
     bison -d -o parser.cpp parser.y || exit 1
-    g++ -std=c++17 -O2 -o fparser parser.cpp || exit 1
+    g++ -std=c++17 -O2 -o fparser parser.cpp ast.cpp analyzer.cpp optimizer.cpp || exit 1
     BIN="./fparser"
 else
     mode="lexer"
