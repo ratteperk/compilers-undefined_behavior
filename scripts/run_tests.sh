@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# Test runner for Project F.
-#
-#   ./run_tests.sh              lexer mode: every tests/*.f must tokenize without errors
-#   ./run_tests.sh --parser     parser mode: every tests/*.f must also parse and pass
-#                               the special-form shape checks
-#   ./run_tests.sh ./f_interpreter
-#                               interpreter mode: stdout is diffed against tests/*.out,
-#                               and *.err tests only have to exit non-zero
-
 set -uo pipefail
-cd "$(dirname "$0")"
 
-TESTS_DIR="tests"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+TESTS_DIR="$ROOT_DIR/tests/runtime"
+BIN="$ROOT_DIR/fcompiler"
+
 INTERPRETER="${1:-}"
 PARSER_MODE=0
 if [[ "$INTERPRETER" == "--parser" ]]; then
@@ -29,44 +23,44 @@ if [[ -n "$INTERPRETER" ]]; then
     fi
 elif [[ $PARSER_MODE -eq 1 ]]; then
     mode="parser"
-    echo "Building parser & semantic analyzer..."
-    bison -d -o parser.cpp parser.y || exit 1
-    g++ -std=c++17 -O2 -o fparser parser.cpp ast.cpp analyzer.cpp optimizer.cpp || exit 1
-    BIN="./fparser"
+    echo "Running parser check on $TESTS_DIR..."
 else
     mode="lexer"
-    BIN="$(mktemp -d)/lexer"
-    trap 'rm -rf "$(dirname "$BIN")"' EXIT
-    echo "Building lexer..."
-    g++ -std=c++17 -Wall -Wextra -O2 -o "$BIN" lexer.cpp || exit 1
+    echo "Running lexer check on $TESTS_DIR..."
 fi
 
-echo "Running $mode tests against $TESTS_DIR/"
-echo
-
 for src in "$TESTS_DIR"/*.f; do
+    [[ -e "$src" ]] || continue
     name="$(basename "$src" .f)"
     expected_out="$TESTS_DIR/$name.out"
     expected_err="$TESTS_DIR/$name.err"
 
-    if [[ "$mode" == "lexer" || "$mode" == "parser" ]]; then
-        # The lexer only decides whether the source tokenizes. A test whose
-        # failure is semantic (division by zero) still has to lex cleanly.
-        if stderr="$("$BIN" "$src" 2>&1 >/dev/null)"; then
-            echo "PASS  $name ($mode)"
+    if [[ "$mode" == "lexer" ]]; then
+        if "$BIN" --lex-only "$src" >/dev/null 2>&1; then
+            echo "PASS  $name (lexer)"
             ((pass++))
         else
-            echo "FAIL  $name ($mode errors)"
-            echo "$stderr" | sed 's/^/        /'
+            echo "FAIL  $name (lexer error)"
             ((fail++))
         fi
         continue
     fi
 
+    if [[ "$mode" == "parser" ]]; then
+        if "$BIN" --parse-only "$src" >/dev/null 2>&1; then
+            echo "PASS  $name (parser)"
+            ((pass++))
+        else
+            echo "FAIL  $name (parser error)"
+            ((fail++))
+        fi
+        continue
+    fi
+
+    # Режим интерпретатора
     if [[ -f "$expected_err" ]]; then
-        # Negative test: only the exit status matters.
         if "$INTERPRETER" "$src" >/dev/null 2>&1; then
-            echo "FAIL  $name (expected a non-zero exit code, got 0)"
+            echo "FAIL  $name (expected exit != 0)"
             ((fail++))
         else
             echo "PASS  $name (fails as expected)"
@@ -82,11 +76,9 @@ for src in "$TESTS_DIR"/*.f; do
             diff -u "$expected_out" <(printf '%s\n' "$actual") | sed 's/^/        /'
             ((fail++))
         fi
-    else
-        echo "SKIP  $name (no .out or .err file)"
     fi
 done
 
 echo
-echo "$pass passed, $fail failed"
+echo "Results: $pass passed, $fail failed."
 [[ $fail -eq 0 ]]

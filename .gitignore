@@ -1,16 +1,11 @@
-# Build artifacts
 build/
 bin/
 *.o
-fparser
+fcompiler
 f_interpreter
 
-# Bison generated files
-src/parser.cpp
-src/parser.hpp
-
-# Temp & Editors
 .obsidian/
 development/.obsidian/
 a.out
 *.swp
+.task/

@@ -1,0 +1,5 @@
+(prog (a)
+  (setq a 1)
+  (func test () (setq a 2))
+  (test)
+  a)

@@ -2,41 +2,61 @@ version: "3"
 
 vars:
   CXX: g++
-  CXXFLAGS: -std=c++17 -Wall -Wextra -O2 -Isrc
+  CXXFLAGS: -std=c++17 -Wall -Wextra -O2 -Isrc/ast -Isrc/frontend -Isrc/sema -Isrc/opt -Ibuild/generated
   BIN: fcompiler
-  SRC_DIR: src
-  TESTS_DIR: tests
+  GEN_DIR: build/generated
 
 tasks:
   default:
     desc: Build the compiler executable
     deps: [parser]
     sources:
-      - "{{.SRC_DIR}}/**/*.cpp"
-      - "{{.SRC_DIR}}/**/*.hpp"
-      - "{{.SRC_DIR}}/parser.cpp"
+      - "src/**/*.cpp"
+      - "src/**/*.hpp"
+      - "{{.GEN_DIR}}/parser.cpp"
     generates:
       - "{{.BIN}}"
     cmds:
-      - "{{.CXX}} {{.CXXFLAGS}} -o {{.BIN}} {{.SRC_DIR}}/parser.cpp {{.SRC_DIR}}/ast.cpp {{.SRC_DIR}}/analyzer.cpp {{.SRC_DIR}}/optimizer.cpp {{.SRC_DIR}}/main.cpp"
+      - >
+        {{.CXX}} {{.CXXFLAGS}} -o {{.BIN}}
+        {{.GEN_DIR}}/parser.cpp
+        src/frontend/lexer.cpp
+        src/ast/ast.cpp
+        src/sema/symbol_table.cpp
+        src/sema/analyzer.cpp
+        src/opt/optimizer.cpp
+        src/driver/main.cpp
 
   parser:
-    desc: Generate parser from Bison grammar
+    desc: Generate parser from Bison grammar into build/generated
     sources:
-      - "{{.SRC_DIR}}/parser.y"
+      - "src/frontend/parser.y"
     generates:
-      - "{{.SRC_DIR}}/parser.cpp"
-      - "{{.SRC_DIR}}/parser.hpp"
+      - "{{.GEN_DIR}}/parser.cpp"
+      - "{{.GEN_DIR}}/parser.hpp"
     cmds:
-      - bison -d -o {{.SRC_DIR}}/parser.cpp {{.SRC_DIR}}/parser.y
+      - mkdir -p {{.GEN_DIR}}
+      - bison -d -o {{.GEN_DIR}}/parser.cpp src/frontend/parser.y
 
   test:
-    desc: Run test suite against compiler
+    desc: Run semantic checks and optimizations test suite
     deps: [default]
     cmds:
-      - ./scripts/run_tests.sh ./{{.BIN}}
+      - ./scripts/test_semantics.sh
+
+  test:lexer:
+    desc: Verify lexer against all runtime tests
+    deps: [default]
+    cmds:
+      - ./scripts/run_tests.sh
+
+  test:parser:
+    desc: Verify parser against all runtime tests
+    deps: [default]
+    cmds:
+      - ./scripts/run_tests.sh --parser
 
   clean:
     desc: Remove generated files and binaries
     cmds:
-      - rm -f {{.BIN}} {{.SRC_DIR}}/parser.cpp {{.SRC_DIR}}/parser.hpp
+      - rm -rf {{.BIN}} build
