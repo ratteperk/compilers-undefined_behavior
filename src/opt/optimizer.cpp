@@ -55,6 +55,26 @@ bool ASTOptimizer::isPure(const Node* node) {
     return false;
 }
 
+// Вид ЗНАЧЕНИЯ выражения, если он известен на этапе компиляции.
+// Внимание: это НЕ node->kind. Для атома `x` вид узла — Atom, а вид значения
+// зависит от того, что лежит в переменной, и статически неизвестен.
+// Известен он только в двух случаях:
+//   * голый литерал  5 / 1.5 / true / null  — значение это он сам;
+//   * (quote X)      — quote возвращает X невычисленным, значит вид значения = вид X.
+bool ASTOptimizer::staticKind(const Node* node, Kind& out) {
+    if (!node) return false;
+    if (node->isLiteral()) {
+        out = node->kind;
+        return true;
+    }
+    if (node->kind == Kind::List && node->items.size() == 2 &&
+        node->items[0]->kind == Kind::Atom && node->items[0]->name == "quote") {
+        out = node->items[1]->kind;
+        return true;
+    }
+    return false;
+}
+
 Node* ASTOptimizer::pass(Node* node) {
     if (!node) return nullptr;
     if (node->kind != Kind::List || node->items.empty()) return node;
@@ -149,12 +169,23 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
     if (nArgs == 1) {
         const Node* a = node->items[1];
 
-        if (op == "isint")   { changed = true; return ctx.makeBool(a->kind == Kind::Int, node->line, node->col); }
-        if (op == "isreal")  { changed = true; return ctx.makeBool(a->kind == Kind::Real, node->line, node->col); }
-        if (op == "isbool")  { changed = true; return ctx.makeBool(a->kind == Kind::Bool, node->line, node->col); }
-        if (op == "isnull")  { changed = true; return ctx.makeBool(a->kind == Kind::Null, node->line, node->col); }
-        if (op == "isatom")  { changed = true; return ctx.makeBool(a->kind == Kind::Atom, node->line, node->col); }
-        if (op == "islist")  { changed = true; return ctx.makeBool(a->kind == Kind::List, node->line, node->col); }
+        // Предикаты типа: сворачиваем ТОЛЬКО если вид значения известен статически.
+        // Для (isint x) ответ зависит от того, что в x во время выполнения, —
+        // такой вызов обязан дожить до рантайма.
+        static const std::unordered_set<std::string> typePredicates = {
+            "isint", "isreal", "isbool", "isnull", "isatom", "islist"};
+        if (typePredicates.find(op) != typePredicates.end()) {
+            Kind vk;
+            if (!staticKind(a, vk)) return node;
+            bool result = (op == "isint" && vk == Kind::Int) ||
+                          (op == "isreal" && vk == Kind::Real) ||
+                          (op == "isbool" && vk == Kind::Bool) ||
+                          (op == "isnull" && vk == Kind::Null) ||
+                          (op == "isatom" && vk == Kind::Atom) ||
+                          (op == "islist" && vk == Kind::List);
+            changed = true;
+            return ctx.makeBool(result, node->line, node->col);
+        }
 
         if (op == "not" && a->kind == Kind::Bool) {
             changed = true;

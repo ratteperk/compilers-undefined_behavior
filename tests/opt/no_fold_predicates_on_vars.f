@@ -1,0 +1,6 @@
+(prog (x)
+  (setq x 5)
+  (isint x)
+  (isatom x)
+  (cond (isnull x) 1 2)
+)

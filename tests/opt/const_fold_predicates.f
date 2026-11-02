@@ -1,0 +1,8 @@
+(isint 5)
+(isreal 1.5)
+(isbool true)
+(isnull null)
+(isatom 'x)
+(islist '(1 2))
+(islist 'x)
+(isint '5)

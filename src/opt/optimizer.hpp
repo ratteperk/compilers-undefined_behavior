@@ -18,4 +18,5 @@ private:
     Node* foldBuiltin(Node* node, const std::string& op);
 
     static bool isPure(const Node* node);
+    static bool staticKind(const Node* node, Kind& out);
 };

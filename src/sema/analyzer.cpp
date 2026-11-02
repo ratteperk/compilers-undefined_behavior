@@ -14,8 +14,9 @@ void SemanticAnalyzer::printErrors() const {
 }
 
 bool SemanticAnalyzer::isSpecialForm(const std::string& name) {
-    static const std::unordered_set<std::string> forms = {"quote", "setq", "func",  "lambda",
-                                                          "prog",  "cond", "while", "return"};
+    static const std::unordered_set<std::string> forms = {"quote", "setq",  "func",   "lambda",
+                                                          "prog",  "cond",  "while",  "return",
+                                                          "break"};
     return forms.find(name) != forms.end();
 }
 
@@ -167,11 +168,15 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             }
         }
 
+        // Тело функции — новый контекст цикла: 'break' не пробивает границу функции
+        int savedLoopDepth = loopDepth;
+        loopDepth = 0;
         contextDepth++;
         for (size_t i = 3; i < node->items.size(); ++i) {
             checkNode(node->items[i]);
         }
         contextDepth--;
+        loopDepth = savedLoopDepth;
         symbols.exitScope();
         return;
     }
@@ -202,11 +207,14 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             }
         }
 
+        int savedLoopDepth = loopDepth;
+        loopDepth = 0;
         contextDepth++;
         for (size_t i = 2; i < node->items.size(); ++i) {
             checkNode(node->items[i]);
         }
         contextDepth--;
+        loopDepth = savedLoopDepth;
         symbols.exitScope();
         return;
     }
@@ -292,7 +300,9 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
                      "Condition in 'while' must be boolean, got " + kindToString(pred->kind) + ".");
         }
         checkNode(node->items[1]);
+        loopDepth++;
         checkNode(node->items[2]);
+        loopDepth--;
         return;
     }
 
@@ -308,6 +318,19 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             return;
         }
         checkNode(node->items[1]);
+        return;
+    }
+
+    if (name == "break") {
+        if (loopDepth == 0) {
+            addError(node->line, node->col,
+                     "'break' statement is not allowed outside of a 'while' loop.");
+        }
+        if (nArgs != 0) {
+            addError(node->line, node->col,
+                     "Special form 'break' expects no arguments, got " + std::to_string(nArgs) +
+                         ".");
+        }
         return;
     }
 }

@@ -23,7 +23,8 @@ private:
     ASTContext &ctx;
     SymbolTable symbols;
     std::vector<SemanticError> errors;
-    int contextDepth = 0;
+    int contextDepth = 0; // глубина func/lambda/prog — гейт для 'return'
+    int loopDepth = 0;    // глубина while — гейт для 'break'
 
     void addError(int line, int col, const std::string &msg);
     void registerTopLevelFunctions(const Node *root);
