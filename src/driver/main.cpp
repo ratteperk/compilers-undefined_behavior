@@ -84,7 +84,15 @@ int main(int argc, char* argv[]) {
     }
 
     if (opt.parseOnly) {
-        if (opt.dumpTreeMode) dumpTree(root);
+        if (opt.dumpTreeMode) {
+            dumpTree(root);
+        } else {
+            // Неоптимизированное дерево в том же формате, что и финальный вывод, —
+            // так «до/после» оптимизации сравнивается обычным diff.
+            for (const Node* expr : root->items) {
+                std::cout << nodeToString(expr) << "\n";
+            }
+        }
         return EX_OK;
     }
 
