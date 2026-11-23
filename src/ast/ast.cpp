@@ -1,4 +1,5 @@
 #include "ast.hpp"
+#include <iomanip>
 #include <sstream>
 
 Node *ASTContext::makeNode(Kind k, int line, int col) {
@@ -78,8 +79,13 @@ std::string nodeToString(const Node *n) {
         return std::to_string(n->i);
     case Kind::Real: {
         std::ostringstream ss;
-        ss << n->r;
-        return ss.str();
+        ss << std::setprecision(15) << n->r;
+        std::string s = ss.str();
+        if (s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
+            s.find('E') == std::string::npos) {
+            s += ".0";
+        }
+        return s;
     }
     case Kind::Bool:
         return n->b ? "true" : "false";

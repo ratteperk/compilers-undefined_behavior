@@ -27,12 +27,13 @@ private:
     int loopDepth = 0;    // глубина while — гейт для 'break'
 
     void addError(int line, int col, const std::string &msg);
-    void registerTopLevelFunctions(const Node *root);
+    void registerFunctionsInBlock(const Node *list, size_t startIdx);
     void checkNode(const Node *node);
     void checkSpecialForm(const Node *node, const std::string &name);
     void checkCall(const Node *node);
     void checkBuiltinCall(const Node *node, const std::string &name);
 
+    static bool staticValueKind(const Node *node, Kind &out);
     static bool isSpecialForm(const std::string &name);
     static bool isBuiltin(const std::string &name);
     static int getBuiltinArity(const std::string &name);

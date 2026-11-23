@@ -30,7 +30,8 @@
 %%
 
 Program
-    : Elements                  { g_root = $1; }
+    : /* empty */               { g_root = g_ctx->makeList(); }
+    | Elements                  { g_root = $1; }
     ;
 
 Elements
@@ -52,8 +53,8 @@ Element
     ;
 
 List
-    : LPAREN Elements RPAREN    { $$ = $2; }
-    | LPAREN RPAREN             { $$ = g_ctx->makeList(); }
+    : LPAREN Elements RPAREN    { $$ = $2; $$->line = $1->line; $$->col = $1->col; }
+    | LPAREN RPAREN             { $$ = $1; }
     ;
 
 %%
@@ -63,7 +64,9 @@ int yylex(void) {
     const Token& t = (*g_tokens)[g_pos++];
 
     switch (t.type) {
-        case TokenType::LEFT_PAREN:  return LPAREN;
+        case TokenType::LEFT_PAREN:
+            yylval = g_ctx->makeList({}, t.line, t.column);
+            return LPAREN;
         case TokenType::RIGHT_PAREN: return RPAREN;
         case TokenType::QUOTE:       return QUOTE;
         case TokenType::EOF_TOKEN:   return 0;

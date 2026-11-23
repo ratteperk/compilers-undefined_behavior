@@ -36,17 +36,30 @@ int SemanticAnalyzer::getBuiltinArity(const std::string& name) {
     return 2;
 }
 
-void SemanticAnalyzer::registerTopLevelFunctions(const Node* root) {
-    if (!root) return;
-    if (root->kind == Kind::List) {
-        for (const Node* expr : root->items) {
-            if (expr->kind == Kind::List && expr->items.size() >= 3) {
-                const Node* first = expr->items[0];
-                if (first->kind == Kind::Atom && first->name == "func") {
-                    const Node* fnName = expr->items[1];
-                    if (fnName->kind == Kind::Atom) {
-                        symbols.define(fnName->name);
-                    }
+bool SemanticAnalyzer::staticValueKind(const Node* node, Kind& out) {
+    if (!node) return false;
+    if (node->isLiteral()) {
+        out = node->kind;
+        return true;
+    }
+    if (node->kind == Kind::List && node->items.size() == 2 &&
+        node->items[0]->kind == Kind::Atom && node->items[0]->name == "quote") {
+        out = node->items[1]->kind;
+        return true;
+    }
+    return false;
+}
+
+void SemanticAnalyzer::registerFunctionsInBlock(const Node* list, size_t startIdx) {
+    if (!list || list->kind != Kind::List) return;
+    for (size_t i = startIdx; i < list->items.size(); ++i) {
+        const Node* expr = list->items[i];
+        if (expr->kind == Kind::List && expr->items.size() >= 4) {
+            const Node* first = expr->items[0];
+            if (first->kind == Kind::Atom && first->name == "func") {
+                const Node* fnName = expr->items[1];
+                if (fnName->kind == Kind::Atom) {
+                    symbols.define(fnName->name);
                 }
             }
         }
@@ -57,8 +70,8 @@ bool SemanticAnalyzer::analyze(const Node* root) {
     errors.clear();
     if (!root) return true;
 
-    // Pass 0: регистрируем все функции верхнего уровня для взаимной рекурсии
-    registerTopLevelFunctions(root);
+    // Регистрируем функции верхнего уровня для взаимной рекурсии
+    registerFunctionsInBlock(root, 0);
 
     if (root->kind == Kind::List) {
         for (const Node* expr : root->items) {
@@ -89,7 +102,11 @@ void SemanticAnalyzer::checkNode(const Node* node) {
     }
 
     case Kind::List: {
-        if (node->items.empty()) return;
+        if (node->items.empty()) {
+            addError(node->line, node->col,
+                     "Empty list '()' cannot be evaluated as a call; use '()' or (quote ()).");
+            return;
+        }
 
         const Node* first = node->items[0];
         if (first->kind == Kind::Atom && isSpecialForm(first->name)) {
@@ -168,6 +185,8 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             }
         }
 
+        registerFunctionsInBlock(node, 3);
+
         // Тело функции — новый контекст цикла: 'break' не пробивает границу функции
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
@@ -206,6 +225,8 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
                 }
             }
         }
+
+        registerFunctionsInBlock(node, 2);
 
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
@@ -247,19 +268,7 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             }
         }
 
-        // Предварительная регистрация функций, определенных внутри блока prog
-        for (size_t i = 2; i < node->items.size(); ++i) {
-            const Node* stmt = node->items[i];
-            if (stmt->kind == Kind::List && stmt->items.size() >= 3) {
-                const Node* first = stmt->items[0];
-                if (first->kind == Kind::Atom && first->name == "func") {
-                    const Node* fnName = stmt->items[1];
-                    if (fnName->kind == Kind::Atom) {
-                        symbols.define(fnName->name);
-                    }
-                }
-            }
-        }
+        registerFunctionsInBlock(node, 2);
 
         contextDepth++;
         for (size_t i = 2; i < node->items.size(); ++i) {
@@ -277,9 +286,10 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             return;
         }
         const Node* pred = node->items[1];
-        if (pred->isLiteral() && pred->kind != Kind::Bool) {
+        Kind predKind;
+        if (staticValueKind(pred, predKind) && predKind != Kind::Bool) {
             addError(pred->line, pred->col,
-                     "Condition in 'cond' must be boolean, got " + kindToString(pred->kind) + ".");
+                     "Condition in 'cond' must be boolean, got " + kindToString(predKind) + ".");
         }
         for (size_t i = 1; i < node->items.size(); ++i) {
             checkNode(node->items[i]);
@@ -295,9 +305,10 @@ void SemanticAnalyzer::checkSpecialForm(const Node* node, const std::string& nam
             return;
         }
         const Node* pred = node->items[1];
-        if (pred->isLiteral() && pred->kind != Kind::Bool) {
+        Kind predKind;
+        if (staticValueKind(pred, predKind) && predKind != Kind::Bool) {
             addError(pred->line, pred->col,
-                     "Condition in 'while' must be boolean, got " + kindToString(pred->kind) + ".");
+                     "Condition in 'while' must be boolean, got " + kindToString(predKind) + ".");
         }
         checkNode(node->items[1]);
         loopDepth++;
@@ -339,10 +350,11 @@ void SemanticAnalyzer::checkCall(const Node* node) {
     const Node* callee = node->items[0];
 
     if (callee->kind == Kind::Atom) {
-        if (!symbols.lookup(callee->name)) {
+        auto sym = symbols.lookupKind(callee->name);
+        if (!sym.has_value()) {
             addError(callee->line, callee->col,
                      "Use of undeclared function or variable '" + callee->name + "'.");
-        } else if (isBuiltin(callee->name)) {
+        } else if (*sym == SymbolKind::Builtin) {
             checkBuiltinCall(node, callee->name);
             return;
         }
@@ -372,6 +384,9 @@ void SemanticAnalyzer::checkBuiltinCall(const Node* node, const std::string& nam
     if (static_cast<int>(nArgs) == expected) {
         const Node* a1 = node->items[1];
         const Node* a2 = (expected == 2) ? node->items[2] : nullptr;
+        Kind k1{}, k2{};
+        bool hasK1 = staticValueKind(a1, k1);
+        bool hasK2 = a2 && staticValueKind(a2, k2);
 
         if (name == "divide" && a2 && a2->isLiteral()) {
             if ((a2->kind == Kind::Int && a2->i == 0) || (a2->kind == Kind::Real && a2->r == 0.0)) {
@@ -380,56 +395,86 @@ void SemanticAnalyzer::checkBuiltinCall(const Node* node, const std::string& nam
         }
 
         if (name == "plus" || name == "minus" || name == "times" || name == "divide") {
-            if (a1->isLiteral() && a1->kind != Kind::Int && a1->kind != Kind::Real) {
+            if (hasK1 && k1 != Kind::Int && k1 != Kind::Real) {
                 addError(a1->line, a1->col,
                          "Built-in '" + name + "' requires integer or real arguments, got " +
-                             kindToString(a1->kind) + ".");
+                             kindToString(k1) + ".");
             }
-            if (a2 && a2->isLiteral() && a2->kind != Kind::Int && a2->kind != Kind::Real) {
+            if (hasK2 && k2 != Kind::Int && k2 != Kind::Real) {
                 addError(a2->line, a2->col,
                          "Built-in '" + name + "' requires integer or real arguments, got " +
-                             kindToString(a2->kind) + ".");
+                             kindToString(k2) + ".");
             }
         }
 
         if (name == "and" || name == "or" || name == "xor") {
-            if (a1->isLiteral() && a1->kind != Kind::Bool) {
+            if (hasK1 && k1 != Kind::Bool) {
                 addError(a1->line, a1->col,
                          "Logical operator '" + name + "' requires boolean arguments, got " +
-                             kindToString(a1->kind) + ".");
+                             kindToString(k1) + ".");
             }
-            if (a2 && a2->isLiteral() && a2->kind != Kind::Bool) {
+            if (hasK2 && k2 != Kind::Bool) {
                 addError(a2->line, a2->col,
                          "Logical operator '" + name + "' requires boolean arguments, got " +
-                             kindToString(a2->kind) + ".");
+                             kindToString(k2) + ".");
             }
         }
         if (name == "not") {
-            if (a1->isLiteral() && a1->kind != Kind::Bool) {
+            if (hasK1 && k1 != Kind::Bool) {
                 addError(a1->line, a1->col,
                          "Logical operator 'not' requires a boolean argument, got " +
-                             kindToString(a1->kind) + ".");
+                             kindToString(k1) + ".");
             }
         }
 
         if (name == "less" || name == "lesseq" || name == "greater" || name == "greatereq") {
-            if (a1->isLiteral() && a1->kind != Kind::Int && a1->kind != Kind::Real) {
+            if (hasK1 && k1 != Kind::Int && k1 != Kind::Real) {
                 addError(a1->line, a1->col,
                          "Comparison operator '" + name + "' requires numeric arguments, got " +
-                             kindToString(a1->kind) + ".");
+                             kindToString(k1) + ".");
             }
-            if (a2 && a2->isLiteral() && a2->kind != Kind::Int && a2->kind != Kind::Real) {
+            if (hasK2 && k2 != Kind::Int && k2 != Kind::Real) {
                 addError(a2->line, a2->col,
                          "Comparison operator '" + name + "' requires numeric arguments, got " +
-                             kindToString(a2->kind) + ".");
+                             kindToString(k2) + ".");
+            }
+        }
+
+        if (name == "equal" || name == "nonequal") {
+            auto isNum = [](Kind k) { return k == Kind::Int || k == Kind::Real; };
+            if (hasK1 && !isNum(k1) && k1 != Kind::Bool) {
+                addError(a1->line, a1->col,
+                         "Comparison operator '" + name +
+                             "' requires integer, real, or boolean arguments, got " +
+                             kindToString(k1) + ".");
+            }
+            if (hasK2 && !isNum(k2) && k2 != Kind::Bool) {
+                addError(a2->line, a2->col,
+                         "Comparison operator '" + name +
+                             "' requires integer, real, or boolean arguments, got " +
+                             kindToString(k2) + ".");
+            }
+            if (hasK1 && hasK2 &&
+                ((isNum(k1) && k2 == Kind::Bool) || (k1 == Kind::Bool && isNum(k2)))) {
+                addError(node->line, node->col,
+                         "Comparison operator '" + name + "' cannot compare " +
+                             kindToString(k1) + " with " + kindToString(k2) + ".");
+            }
+        }
+
+        if (name == "cons") {
+            if (hasK2 && k2 != Kind::List && k2 != Kind::Null) {
+                addError(a2->line, a2->col,
+                         "Second argument of 'cons' must be a list or null, got " +
+                             kindToString(k2) + ".");
             }
         }
 
         if (name == "head" || name == "tail") {
-            if (a1->isLiteral() && a1->kind != Kind::List && a1->kind != Kind::Null) {
+            if (hasK1 && k1 != Kind::List) {
                 addError(a1->line, a1->col,
-                         "Built-in '" + name + "' requires a list argument, got " +
-                             kindToString(a1->kind) + ".");
+                         "Built-in '" + name + "' requires a non-empty list argument, got " +
+                             kindToString(k1) + ".");
             }
             if (a1->kind == Kind::List && a1->items.size() == 2 &&
                 a1->items[0]->kind == Kind::Atom && a1->items[0]->name == "quote") {

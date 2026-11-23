@@ -1,3 +1,4 @@
+// src/sema/symbol_table.cpp
 #include "symbol_table.hpp"
 
 SymbolTable::SymbolTable() {
@@ -7,7 +8,7 @@ SymbolTable::SymbolTable() {
         "greater", "greatereq", "and",    "or",     "xor",    "not",      "head",  "tail",
         "cons",    "isint",     "isreal", "isbool", "isnull", "isatom",   "islist"};
     for (const auto& b : builtins) {
-        scopes.back().insert(b);
+        scopes.back()[b] = SymbolKind::Builtin;
     }
 }
 
@@ -25,22 +26,28 @@ bool SymbolTable::declare(const std::string& name) {
     if (current.find(name) != current.end()) {
         return false;
     }
-    current.insert(name);
+    current[name] = SymbolKind::User;
     return true;
 }
 
 void SymbolTable::define(const std::string& name) {
     if (!scopes.empty()) {
-        scopes.back().insert(name);
+        scopes.back()[name] = SymbolKind::User;
     }
 }
 
 bool SymbolTable::lookup(const std::string& name) const {
+    return lookupKind(name).has_value();
+}
+
+std::optional<SymbolKind> SymbolTable::lookupKind(const std::string& name) const {
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        if (it->find(name) != it->end())
-            return true;
+        auto found = it->find(name);
+        if (found != it->end()) {
+            return found->second;
+        }
     }
-    return false;
+    return std::nullopt;
 }
 
 bool SymbolTable::isCurrentScope(const std::string& name) const {

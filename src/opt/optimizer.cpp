@@ -1,5 +1,6 @@
 #include "optimizer.hpp"
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 
 Node* ASTOptimizer::optimize(Node* root) {
@@ -9,7 +10,13 @@ Node* ASTOptimizer::optimize(Node* root) {
     int iter = 0;
     do {
         changed = false;
-        root = pass(root);
+        if (root->kind == Kind::List) {
+            for (size_t i = 0; i < root->items.size(); ++i) {
+                root->items[i] = pass(root->items[i]);
+            }
+        } else {
+            root = pass(root);
+        }
         iter++;
     } while (changed && iter < MAX_ITERATIONS);
 
@@ -26,6 +33,14 @@ bool ASTOptimizer::isPure(const Node* node) {
         if (head->kind == Kind::Atom) {
             if (head->name == "quote") return true;
 
+            // head/tail чисты ТОЛЬКО на статически непустом цитированном списке
+            if ((head->name == "head" || head->name == "tail") && node->items.size() == 2) {
+                const Node* arg = node->items[1];
+                return arg->kind == Kind::List && arg->items.size() == 2 &&
+                       arg->items[0]->kind == Kind::Atom && arg->items[0]->name == "quote" &&
+                       arg->items[1]->kind == Kind::List && !arg->items[1]->items.empty();
+            }
+
             // divide чистый ТОЛЬКО если делитель — статически ненулевой литерал
             if (head->name == "divide" && node->items.size() == 3) {
                 const Node* divisor = node->items[2];
@@ -38,7 +53,7 @@ bool ASTOptimizer::isPure(const Node* node) {
             static const std::unordered_set<std::string> pureBuiltins = {
                 "plus", "minus", "times", "equal", "nonequal",
                 "less", "lesseq", "greater", "greatereq", "and", "or",
-                "xor", "not", "head", "tail", "cons", "isint", "isreal",
+                "xor", "not", "cons", "isint", "isreal",
                 "isbool", "isnull", "isatom", "islist"
             };
             if (pureBuiltins.find(head->name) == pureBuiltins.end()) {
@@ -47,8 +62,8 @@ bool ASTOptimizer::isPure(const Node* node) {
         } else {
             return false;
         }
-        for (const Node* item : node->items) {
-            if (!isPure(item)) return false;
+        for (size_t i = 1; i < node->items.size(); ++i) {
+            if (!isPure(node->items[i])) return false;
         }
         return true;
     }
@@ -177,10 +192,14 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
         if (typePredicates.find(op) != typePredicates.end()) {
             Kind vk;
             if (!staticKind(a, vk)) return node;
+            bool isEmptyQuotedList =
+                (a->kind == Kind::List && a->items.size() == 2 &&
+                 a->items[0]->kind == Kind::Atom && a->items[0]->name == "quote" &&
+                 a->items[1]->kind == Kind::List && a->items[1]->items.empty());
             bool result = (op == "isint" && vk == Kind::Int) ||
                           (op == "isreal" && vk == Kind::Real) ||
                           (op == "isbool" && vk == Kind::Bool) ||
-                          (op == "isnull" && vk == Kind::Null) ||
+                          (op == "isnull" && (vk == Kind::Null || isEmptyQuotedList)) ||
                           (op == "isatom" && vk == Kind::Atom) ||
                           (op == "islist" && vk == Kind::List);
             changed = true;
@@ -220,42 +239,76 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
         const Node* a = node->items[1];
         const Node* b = node->items[2];
 
-        // Constant folding для cons
+        // Constant folding для cons (второй аргумент — литеральный список или null)
         if (op == "cons") {
+            const Node* tailQuotedList = nullptr;
+            bool tailIsNull = (b->kind == Kind::Null);
             if (b->kind == Kind::List && b->items.size() == 2 &&
-                b->items[0]->kind == Kind::Atom && b->items[0]->name == "quote") {
-                const Node* quoted = b->items[1];
-                if (quoted->kind == Kind::List) {
-                    Node* elemToInsert = nullptr;
-                    if (a->isLiteral()) {
-                        elemToInsert = ctx.clone(a);
-                    } else if (a->kind == Kind::List && a->items.size() == 2 &&
-                               a->items[0]->kind == Kind::Atom && a->items[0]->name == "quote") {
-                        elemToInsert = ctx.clone(a->items[1]);
-                    }
+                b->items[0]->kind == Kind::Atom && b->items[0]->name == "quote" &&
+                b->items[1]->kind == Kind::List) {
+                tailQuotedList = b->items[1];
+            }
 
-                    if (elemToInsert) {
-                        changed = true;
-                        std::vector<Node*> newItems;
-                        newItems.reserve(quoted->items.size() + 1);
-                        newItems.push_back(elemToInsert);
-                        for (const Node* item : quoted->items) {
+            if (tailQuotedList || tailIsNull) {
+                Node* elemToInsert = nullptr;
+                if (a->isLiteral()) {
+                    elemToInsert = ctx.clone(a);
+                } else if (a->kind == Kind::List && a->items.size() == 2 &&
+                           a->items[0]->kind == Kind::Atom && a->items[0]->name == "quote") {
+                    elemToInsert = ctx.clone(a->items[1]);
+                }
+
+                if (elemToInsert) {
+                    changed = true;
+                    std::vector<Node*> newItems;
+                    if (tailQuotedList) {
+                        newItems.reserve(tailQuotedList->items.size() + 1);
+                    }
+                    newItems.push_back(elemToInsert);
+                    if (tailQuotedList) {
+                        for (const Node* item : tailQuotedList->items) {
                             newItems.push_back(ctx.clone(item));
                         }
-                        Node* newList = ctx.makeList(std::move(newItems), node->line, node->col);
-                        return ctx.makeList({ctx.makeAtom("quote", node->line, node->col), newList},
-                                            node->line, node->col);
                     }
+                    Node* newList = ctx.makeList(std::move(newItems), node->line, node->col);
+                    return ctx.makeList({ctx.makeAtom("quote", node->line, node->col), newList},
+                                        node->line, node->col);
                 }
             }
         }
 
-        // Арифметика целых чисел
+        // Арифметика целых чисел (с защитой от переполнения)
         if (a->kind == Kind::Int && b->kind == Kind::Int) {
-            if (op == "plus")  { changed = true; return ctx.makeInt(a->i + b->i, node->line, node->col); }
-            if (op == "minus") { changed = true; return ctx.makeInt(a->i - b->i, node->line, node->col); }
-            if (op == "times") { changed = true; return ctx.makeInt(a->i * b->i, node->line, node->col); }
-            if (op == "divide" && b->i != 0) {
+            using LL = long long;
+            constexpr LL LL_MAX = std::numeric_limits<LL>::max();
+            constexpr LL LL_MIN = std::numeric_limits<LL>::min();
+
+            if (op == "plus") {
+                if (!((b->i > 0 && a->i > LL_MAX - b->i) || (b->i < 0 && a->i < LL_MIN - b->i))) {
+                    changed = true;
+                    return ctx.makeInt(a->i + b->i, node->line, node->col);
+                }
+            } else if (op == "minus") {
+                if (!((b->i < 0 && a->i > LL_MAX + b->i) || (b->i > 0 && a->i < LL_MIN + b->i))) {
+                    changed = true;
+                    return ctx.makeInt(a->i - b->i, node->line, node->col);
+                }
+            } else if (op == "times") {
+                bool overflows = false;
+                if (a->i != 0 && b->i != 0) {
+                    if ((a->i == -1 && b->i == LL_MIN) || (b->i == -1 && a->i == LL_MIN)) {
+                        overflows = true;
+                    } else if (a->i > 0) {
+                        overflows = (b->i > 0) ? (a->i > LL_MAX / b->i) : (b->i < LL_MIN / a->i);
+                    } else {
+                        overflows = (b->i > 0) ? (a->i < LL_MIN / b->i) : (a->i < LL_MAX / b->i);
+                    }
+                }
+                if (!overflows) {
+                    changed = true;
+                    return ctx.makeInt(a->i * b->i, node->line, node->col);
+                }
+            } else if (op == "divide" && b->i != 0 && !(a->i == LL_MIN && b->i == -1)) {
                 changed = true;
                 return ctx.makeInt(a->i / b->i, node->line, node->col);
             }
