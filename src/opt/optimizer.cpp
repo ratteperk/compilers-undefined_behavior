@@ -1,7 +1,78 @@
 #include "optimizer.hpp"
-#include <cmath>
 #include <limits>
 #include <unordered_set>
+
+void ASTOptimizer::enterScope(bool isFunctionBoundary) {
+    scopes.push_back({{}, isFunctionBoundary});
+}
+
+void ASTOptimizer::exitScope() {
+    if (!scopes.empty()) {
+        scopes.pop_back();
+    }
+}
+
+void ASTOptimizer::declareLocal(const std::string& name) {
+    if (!scopes.empty()) {
+        scopes.back().names.insert(name);
+    }
+}
+
+void ASTOptimizer::defineInFunctionScope(const std::string& name) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->names.find(name) != it->names.end()) {
+            return;
+        }
+        if (it->isFunctionBoundary) {
+            it->names.insert(name);
+            return;
+        }
+    }
+    if (!scopes.empty()) {
+        scopes.front().names.insert(name);
+    }
+}
+
+bool ASTOptimizer::isShadowed(const std::string& name) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->names.find(name) != it->names.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ASTOptimizer::registerFunctionsInBlock(const Node* listNode, std::size_t startIdx) {
+    if (!listNode || listNode->kind != Kind::List) return;
+    for (std::size_t i = startIdx; i < listNode->items.size(); ++i) {
+        const Node* expr = listNode->items[i];
+        if (expr->kind == Kind::List && expr->items.size() >= 4 &&
+            expr->items[0]->kind == Kind::Atom && expr->items[0]->name == "func" &&
+            expr->items[1]->kind == Kind::Atom) {
+            declareLocal(expr->items[1]->name);
+        }
+    }
+}
+
+void ASTOptimizer::collectSetqTargets(const Node* node) {
+    if (!node || node->kind != Kind::List || node->items.empty()) return;
+    const Node* first = node->items[0];
+    if (first->kind == Kind::Atom) {
+        if (first->name == "quote" || first->name == "func" || first->name == "lambda") {
+            return;
+        }
+        if (first->name == "setq" && node->items.size() == 3) {
+            if (node->items[1]->kind == Kind::Atom) {
+                defineInFunctionScope(node->items[1]->name);
+            }
+            collectSetqTargets(node->items[2]);
+            return;
+        }
+    }
+    for (const Node* child : node->items) {
+        collectSetqTargets(child);
+    }
+}
 
 Node* ASTOptimizer::optimize(Node* root) {
     if (!root) return nullptr;
@@ -10,72 +81,22 @@ Node* ASTOptimizer::optimize(Node* root) {
     int iter = 0;
     do {
         changed = false;
+        scopes.clear();
+        enterScope(true);
+
         if (root->kind == Kind::List) {
-            for (size_t i = 0; i < root->items.size(); ++i) {
-                root->items[i] = pass(root->items[i]);
-            }
+            root = passBlock(root, 0, false);
         } else {
             root = pass(root);
         }
+
+        exitScope();
         iter++;
     } while (changed && iter < MAX_ITERATIONS);
 
     return root;
 }
 
-bool ASTOptimizer::isPure(const Node* node) {
-    if (!node) return true;
-    if (node->isLiteral()) return true;
-    if (node->kind == Kind::Atom) return true;
-    if (node->kind == Kind::List) {
-        if (node->items.empty()) return true;
-        const Node* head = node->items[0];
-        if (head->kind == Kind::Atom) {
-            if (head->name == "quote") return true;
-
-            // head/tail чисты ТОЛЬКО на статически непустом цитированном списке
-            if ((head->name == "head" || head->name == "tail") && node->items.size() == 2) {
-                const Node* arg = node->items[1];
-                return arg->kind == Kind::List && arg->items.size() == 2 &&
-                       arg->items[0]->kind == Kind::Atom && arg->items[0]->name == "quote" &&
-                       arg->items[1]->kind == Kind::List && !arg->items[1]->items.empty();
-            }
-
-            // divide чистый ТОЛЬКО если делитель — статически ненулевой литерал
-            if (head->name == "divide" && node->items.size() == 3) {
-                const Node* divisor = node->items[2];
-                bool nonZero = (divisor->kind == Kind::Int && divisor->i != 0) ||
-                               (divisor->kind == Kind::Real && divisor->r != 0.0);
-                if (!nonZero) return false;
-                return isPure(node->items[1]);
-            }
-
-            static const std::unordered_set<std::string> pureBuiltins = {
-                "plus", "minus", "times", "equal", "nonequal",
-                "less", "lesseq", "greater", "greatereq", "and", "or",
-                "xor", "not", "cons", "isint", "isreal",
-                "isbool", "isnull", "isatom", "islist"
-            };
-            if (pureBuiltins.find(head->name) == pureBuiltins.end()) {
-                return false;
-            }
-        } else {
-            return false;
-        }
-        for (size_t i = 1; i < node->items.size(); ++i) {
-            if (!isPure(node->items[i])) return false;
-        }
-        return true;
-    }
-    return false;
-}
-
-// Вид ЗНАЧЕНИЯ выражения, если он известен на этапе компиляции.
-// Внимание: это НЕ node->kind. Для атома `x` вид узла — Atom, а вид значения
-// зависит от того, что лежит в переменной, и статически неизвестен.
-// Известен он только в двух случаях:
-//   * голый литерал  5 / 1.5 / true / null  — значение это он сам;
-//   * (quote X)      — quote возвращает X невычисленным, значит вид значения = вид X.
 bool ASTOptimizer::staticKind(const Node* node, Kind& out) {
     if (!node) return false;
     if (node->isLiteral()) {
@@ -90,81 +111,216 @@ bool ASTOptimizer::staticKind(const Node* node, Kind& out) {
     return false;
 }
 
+bool ASTOptimizer::isGuaranteedBool(const Node* node) const {
+    if (!node) return false;
+    if (node->kind == Kind::Bool) return true;
+    if (node->kind == Kind::List && !node->items.empty()) {
+        const Node* head = node->items[0];
+        if (head->kind != Kind::Atom || isShadowed(head->name)) {
+            return false;
+        }
+        const std::string& op = head->name;
+        if (node->items.size() == 2) {
+            if (op == "isint" || op == "isreal" || op == "isbool" || op == "isnull" ||
+                op == "isatom" || op == "islist") {
+                return true;
+            }
+            if (op == "not") {
+                return isGuaranteedBool(node->items[1]);
+            }
+        }
+        if (node->items.size() == 3 && (op == "and" || op == "or" || op == "xor")) {
+            return isGuaranteedBool(node->items[1]) && isGuaranteedBool(node->items[2]);
+        }
+    }
+    return false;
+}
+
+bool ASTOptimizer::isPure(const Node* node) const {
+    if (!node) return true;
+    if (node->isLiteral() || node->kind == Kind::Atom) return true;
+    if (node->kind != Kind::List || node->items.empty()) return false;
+
+    const Node* head = node->items[0];
+    if (head->kind != Kind::Atom) return false;
+    if (head->name == "quote") return true;
+    if (isShadowed(head->name)) return false;
+
+    const std::string& op = head->name;
+    std::size_t nArgs = node->items.size() - 1;
+
+    // Предикаты типа принимают любое значение и не кидают RuntimeError
+    if (nArgs == 1 && (op == "isint" || op == "isreal" || op == "isbool" || op == "isnull" ||
+                       op == "isatom" || op == "islist")) {
+        return isPure(node->items[1]);
+    }
+
+    if (nArgs == 1 && op == "not") {
+        return isGuaranteedBool(node->items[1]) && isPure(node->items[1]);
+    }
+
+    if (nArgs == 2 && (op == "and" || op == "or" || op == "xor")) {
+        return isGuaranteedBool(node->items[1]) && isGuaranteedBool(node->items[2]) &&
+               isPure(node->items[1]) && isPure(node->items[2]);
+    }
+
+    if ((op == "head" || op == "tail") && nArgs == 1) {
+        const Node* arg = node->items[1];
+        return arg->kind == Kind::List && arg->items.size() == 2 &&
+               arg->items[0]->kind == Kind::Atom && arg->items[0]->name == "quote" &&
+               arg->items[1]->kind == Kind::List && !arg->items[1]->items.empty();
+    }
+
+    if (op == "cons" && nArgs == 2) {
+        const Node* tailArg = node->items[2];
+        bool tailIsValid =
+            (tailArg->kind == Kind::Null) ||
+            (tailArg->kind == Kind::List && tailArg->items.size() == 2 &&
+             tailArg->items[0]->kind == Kind::Atom && tailArg->items[0]->name == "quote" &&
+             tailArg->items[1]->kind == Kind::List);
+        return tailIsValid && isPure(node->items[1]);
+    }
+
+    // Арифметика и сравнения над литералами уже сворачиваются в foldBuiltin;
+    // на переменных они могут упасть по типам или делению на ноль, поэтому не чисты.
+    return false;
+}
+
+Node* ASTOptimizer::passBlock(Node* listNode, std::size_t startIdx, bool allowReturnTrim) {
+    registerFunctionsInBlock(listNode, startIdx);
+
+    std::vector<Node*> kept;
+    kept.reserve(listNode->items.size());
+    for (std::size_t i = 0; i < startIdx; ++i) {
+        kept.push_back(listNode->items[i]);
+    }
+
+    bool hitReturn = false;
+    for (std::size_t i = startIdx; i < listNode->items.size(); ++i) {
+        Node* item = listNode->items[i];
+        bool isFuncDecl = (item->kind == Kind::List && item->items.size() >= 4 &&
+                           item->items[0]->kind == Kind::Atom && item->items[0]->name == "func");
+
+        if (hitReturn && !isFuncDecl) {
+            changed = true;
+            continue;
+        }
+
+        Node* optItem = pass(item);
+        kept.push_back(optItem);
+
+        if (allowReturnTrim && !hitReturn && optItem->kind == Kind::List &&
+            !optItem->items.empty() && optItem->items[0]->kind == Kind::Atom &&
+            optItem->items[0]->name == "return") {
+            hitReturn = true;
+        }
+    }
+
+    listNode->items = std::move(kept);
+    return listNode;
+}
+
 Node* ASTOptimizer::pass(Node* node) {
     if (!node) return nullptr;
     if (node->kind != Kind::List || node->items.empty()) return node;
 
     const Node* first = node->items[0];
-    if (first->kind == Kind::Atom && first->name == "quote") {
-        return node;
-    }
-
-    bool isSequentialBlock = false;
-    size_t bodyStartIdx = 0;
     if (first->kind == Kind::Atom) {
-        if (first->name == "prog" && node->items.size() > 2) {
-            isSequentialBlock = true;
-            bodyStartIdx = 2; // [0]=prog, [1]=vars
-        } else if (first->name == "func" && node->items.size() > 3) {
-            isSequentialBlock = true;
-            bodyStartIdx = 3; // [0]=func, [1]=name, [2]=params
-        } else if (first->name == "lambda" && node->items.size() > 2) {
-            isSequentialBlock = true;
-            bodyStartIdx = 2; // [0]=lambda, [1]=params
-        }
-    }
+        const std::string& form = first->name;
 
-    if (isSequentialBlock) {
-        std::vector<Node*> trimmed;
-        for (size_t i = 0; i < bodyStartIdx; ++i) {
-            trimmed.push_back(node->items[i]);
+        if (form == "quote") {
+            return node;
         }
-        bool hitReturn = false;
-        for (size_t i = bodyStartIdx; i < node->items.size(); ++i) {
-            if (hitReturn) {
-                changed = true;
-                continue;
+
+        if (form == "func" && node->items.size() >= 4) {
+            if (node->items[1]->kind == Kind::Atom) {
+                declareLocal(node->items[1]->name);
             }
-            Node* optItem = pass(node->items[i]);
-            trimmed.push_back(optItem);
-            if (optItem->kind == Kind::List && !optItem->items.empty() &&
-                optItem->items[0]->kind == Kind::Atom && optItem->items[0]->name == "return") {
-                hitReturn = true;
+            enterScope(true);
+            if (node->items[2]->kind == Kind::List) {
+                for (const Node* p : node->items[2]->items) {
+                    if (p->kind == Kind::Atom) {
+                        declareLocal(p->name);
+                    }
+                }
             }
+            passBlock(node, 3, true);
+            exitScope();
+            return node;
         }
-        node->items = std::move(trimmed);
-        return node;
-    }
 
-    for (size_t i = 0; i < node->items.size(); ++i) {
-        node->items[i] = pass(node->items[i]);
-    }
+        if (form == "lambda" && node->items.size() >= 3) {
+            enterScope(true);
+            if (node->items[1]->kind == Kind::List) {
+                for (const Node* p : node->items[1]->items) {
+                    if (p->kind == Kind::Atom) {
+                        declareLocal(p->name);
+                    }
+                }
+            }
+            passBlock(node, 2, true);
+            exitScope();
+            return node;
+        }
 
-    // Dead branch pruning
-    if (first->kind == Kind::Atom) {
-        if (first->name == "cond" && node->items.size() >= 3) {
+        if (form == "prog" && node->items.size() >= 2) {
+            enterScope(false);
+            if (node->items[1]->kind == Kind::List) {
+                for (const Node* v : node->items[1]->items) {
+                    if (v->kind == Kind::Atom) {
+                        declareLocal(v->name);
+                    }
+                }
+            }
+            passBlock(node, 2, true);
+            exitScope();
+            return node;
+        }
+
+        if (form == "setq" && node->items.size() == 3) {
+            node->items[2] = pass(node->items[2]);
+            if (node->items[1]->kind == Kind::Atom) {
+                defineInFunctionScope(node->items[1]->name);
+            }
+            return node;
+        }
+
+        if (form == "cond" && (node->items.size() == 3 || node->items.size() == 4)) {
+            node->items[1] = pass(node->items[1]);
             const Node* pred = node->items[1];
             if (pred->kind == Kind::Bool) {
                 changed = true;
                 if (pred->b) {
-                    return node->items[2];
-                } else {
-                    if (node->items.size() == 4) {
-                        return node->items[3];
-                    } else {
-                        return ctx.makeNull(node->line, node->col);
-                    }
+                    return pass(node->items[2]);
                 }
+                if (node->items.size() == 4) {
+                    return pass(node->items[3]);
+                }
+                return ctx.makeNull(node->line, node->col);
             }
+            node->items[2] = pass(node->items[2]);
+            if (node->items.size() == 4) {
+                node->items[3] = pass(node->items[3]);
+            }
+            return node;
         }
 
-        if (first->name == "while" && node->items.size() == 3) {
+        if (form == "while" && node->items.size() == 3) {
+            collectSetqTargets(node->items[1]);
+            collectSetqTargets(node->items[2]);
+            node->items[1] = pass(node->items[1]);
             const Node* pred = node->items[1];
             if (pred->kind == Kind::Bool && !pred->b) {
                 changed = true;
                 return ctx.makeNull(node->line, node->col);
             }
+            node->items[2] = pass(node->items[2]);
+            return node;
         }
+    }
+
+    for (std::size_t i = 0; i < node->items.size(); ++i) {
+        node->items[i] = pass(node->items[i]);
     }
 
     return foldNode(node);
@@ -174,19 +330,17 @@ Node* ASTOptimizer::foldNode(Node* node) {
     if (node->kind != Kind::List || node->items.empty()) return node;
     const Node* first = node->items[0];
     if (first->kind != Kind::Atom) return node;
+    if (isShadowed(first->name)) return node;
 
     return foldBuiltin(node, first->name);
 }
 
 Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
-    size_t nArgs = node->items.size() - 1;
+    std::size_t nArgs = node->items.size() - 1;
 
     if (nArgs == 1) {
         const Node* a = node->items[1];
 
-        // Предикаты типа: сворачиваем ТОЛЬКО если вид значения известен статически.
-        // Для (isint x) ответ зависит от того, что в x во время выполнения, —
-        // такой вызов обязан дожить до рантайма.
         static const std::unordered_set<std::string> typePredicates = {
             "isint", "isreal", "isbool", "isnull", "isatom", "islist"};
         if (typePredicates.find(op) != typePredicates.end()) {
@@ -222,6 +376,7 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
                                     node->line, node->col);
             }
         }
+
         if (op == "tail" && a->kind == Kind::List && a->items.size() == 2 &&
             a->items[0]->kind == Kind::Atom && a->items[0]->name == "quote") {
             const Node* quoted = a->items[1];
@@ -239,7 +394,6 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
         const Node* a = node->items[1];
         const Node* b = node->items[2];
 
-        // Constant folding для cons (второй аргумент — литеральный список или null)
         if (op == "cons") {
             const Node* tailQuotedList = nullptr;
             bool tailIsNull = (b->kind == Kind::Null);
@@ -277,7 +431,6 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
             }
         }
 
-        // Арифметика целых чисел (с защитой от переполнения)
         if (a->kind == Kind::Int && b->kind == Kind::Int) {
             using LL = long long;
             constexpr LL LL_MAX = std::numeric_limits<LL>::max();
@@ -317,7 +470,7 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
             double v1 = (a->kind == Kind::Int) ? static_cast<double>(a->i) : a->r;
             double v2 = (b->kind == Kind::Int) ? static_cast<double>(b->i) : b->r;
 
-            if (op == "plus")  { changed = true; return ctx.makeReal(v1 + v2, node->line, node->col); }
+            if (op == "plus") { changed = true; return ctx.makeReal(v1 + v2, node->line, node->col); }
             if (op == "minus") { changed = true; return ctx.makeReal(v1 - v2, node->line, node->col); }
             if (op == "times") { changed = true; return ctx.makeReal(v1 * v2, node->line, node->col); }
             if (op == "divide" && v2 != 0.0) {
@@ -328,27 +481,27 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
 
         if (a->kind == Kind::Bool && b->kind == Kind::Bool) {
             if (op == "and") { changed = true; return ctx.makeBool(a->b && b->b, node->line, node->col); }
-            if (op == "or")  { changed = true; return ctx.makeBool(a->b || b->b, node->line, node->col); }
+            if (op == "or") { changed = true; return ctx.makeBool(a->b || b->b, node->line, node->col); }
             if (op == "xor") { changed = true; return ctx.makeBool(a->b ^ b->b, node->line, node->col); }
         }
 
-        // Short-circuit folding с проверкой чистоты
-        if (op == "and") {
-            if (a->kind == Kind::Bool && !a->b && isPure(b)) {
+        if (op == "and" && a->kind == Kind::Bool) {
+            if (!a->b && isGuaranteedBool(b) && isPure(b)) {
                 changed = true;
                 return ctx.makeBool(false, node->line, node->col);
             }
-            if (a->kind == Kind::Bool && a->b && isPure(b)) {
+            if (a->b && isGuaranteedBool(b)) {
                 changed = true;
                 return ctx.clone(b);
             }
         }
-        if (op == "or") {
-            if (a->kind == Kind::Bool && a->b && isPure(b)) {
+
+        if (op == "or" && a->kind == Kind::Bool) {
+            if (a->b && isGuaranteedBool(b) && isPure(b)) {
                 changed = true;
                 return ctx.makeBool(true, node->line, node->col);
             }
-            if (a->kind == Kind::Bool && !a->b && isPure(b)) {
+            if (!a->b && isGuaranteedBool(b)) {
                 changed = true;
                 return ctx.clone(b);
             }
@@ -368,7 +521,7 @@ Node* ASTOptimizer::foldBuiltin(Node* node, const std::string& op) {
         }
 
         if (a->kind == Kind::Bool && b->kind == Kind::Bool) {
-            if (op == "equal")    { changed = true; return ctx.makeBool(a->b == b->b, node->line, node->col); }
+            if (op == "equal") { changed = true; return ctx.makeBool(a->b == b->b, node->line, node->col); }
             if (op == "nonequal") { changed = true; return ctx.makeBool(a->b != b->b, node->line, node->col); }
         }
     }

@@ -1,5 +1,6 @@
 #include "analyzer.hpp"
 #include "ast.hpp"
+#include "interpreter.hpp"
 #include "lexer.hpp"
 #include "optimizer.hpp"
 #include "parser.hpp"
@@ -13,17 +14,28 @@ static const int EX_OK = 0;
 static const int EX_USAGE = 64;
 static const int EX_DATAERR = 65;
 static const int EX_NOINPUT = 66;
+static const int EX_SOFTWARE = 70;
 
 struct Options {
     bool lexOnly = false;
     bool parseOnly = false;
     bool checkOnly = false;
     bool dumpTreeMode = false;
+    bool run = false;
     std::string filename;
 };
 
 Options parseArgs(int argc, char* argv[]) {
     Options opt;
+    if (argc > 0 && argv[0]) {
+        std::string prog = argv[0];
+        auto slash = prog.find_last_of("/\\");
+        std::string base = (slash == std::string::npos) ? prog : prog.substr(slash + 1);
+        if (base == "f_interpreter") {
+            opt.run = true;
+        }
+    }
+
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--lex-only") {
@@ -34,6 +46,8 @@ Options parseArgs(int argc, char* argv[]) {
             opt.checkOnly = true;
         } else if (arg == "--dump-tree") {
             opt.dumpTreeMode = true;
+        } else if (arg == "--run") {
+            opt.run = true;
         } else if (arg.rfind("--", 0) == 0) {
             std::cerr << "Unknown option: " << arg << "\n";
             std::exit(EX_USAGE);
@@ -87,8 +101,6 @@ int main(int argc, char* argv[]) {
         if (opt.dumpTreeMode) {
             dumpTree(root);
         } else {
-            // Неоптимизированное дерево в том же формате, что и финальный вывод, —
-            // так «до/после» оптимизации сравнивается обычным diff.
             for (const Node* expr : root->items) {
                 std::cout << nodeToString(expr) << "\n";
             }
@@ -111,7 +123,19 @@ int main(int argc, char* argv[]) {
     ASTOptimizer optimizer(ctx);
     Node* optRoot = optimizer.optimize(root);
 
-    // 5. Output
+    // 5. Execution or AST Output
+    if (opt.run) {
+        try {
+            Interpreter interp;
+            interp.run(optRoot, std::cout);
+        } catch (const RuntimeError& err) {
+            std::cerr << "[line " << err.line << ":" << err.col << "] Runtime Error: "
+                      << err.what() << "\n";
+            return EX_SOFTWARE;
+        }
+        return EX_OK;
+    }
+
     if (opt.dumpTreeMode) {
         dumpTree(optRoot);
     } else {

@@ -1,0 +1,5 @@
+(prog ()
+  (func plus (x) (times x 10))
+  (plus 4)
+)
+(plus 2 3)

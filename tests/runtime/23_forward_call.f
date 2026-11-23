@@ -1,0 +1,8 @@
+(func isEven (n)
+  (cond (equal n 0) true (isOdd (minus n 1)))
+)
+(func isOdd (n)
+  (cond (equal n 0) false (isEven (minus n 1)))
+)
+(isEven 6)
+(isOdd 6)

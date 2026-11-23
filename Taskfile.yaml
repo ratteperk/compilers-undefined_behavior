@@ -2,13 +2,14 @@ version: "3"
 
 vars:
   CXX: g++
-  CXXFLAGS: -std=c++17 -Wall -Wextra -O2 -Isrc/ast -Isrc/frontend -Isrc/sema -Isrc/opt -Ibuild/generated
+  CXXFLAGS: -std=c++17 -Wall -Wextra -O2 -Isrc/ast -Isrc/frontend -Isrc/sema -Isrc/opt -Isrc/runtime -Ibuild/generated
   BIN: fcompiler
+  INTERP: f_interpreter
   GEN_DIR: build/generated
 
 tasks:
   default:
-    desc: Build the compiler executable
+    desc: Build compiler and interpreter symlink
     deps: [parser]
     sources:
       - "src/**/*.cpp"
@@ -16,6 +17,7 @@ tasks:
       - "{{.GEN_DIR}}/parser.cpp"
     generates:
       - "{{.BIN}}"
+      - "{{.INTERP}}"
     cmds:
       - >
         {{.CXX}} {{.CXXFLAGS}} -o {{.BIN}}
@@ -25,7 +27,11 @@ tasks:
         src/sema/symbol_table.cpp
         src/sema/analyzer.cpp
         src/opt/optimizer.cpp
+        src/runtime/value.cpp
+        src/runtime/builtins.cpp
+        src/runtime/interpreter.cpp
         src/driver/main.cpp
+      - ln -sf {{.BIN}} {{.INTERP}}
 
   parser:
     desc: Generate parser from Bison grammar into build/generated
@@ -56,7 +62,13 @@ tasks:
     cmds:
       - ./scripts/run_tests.sh --parser
 
+  test:runtime:
+    desc: Run interpreter against all runtime tests
+    deps: [default]
+    cmds:
+      - ./scripts/run_tests.sh ./{{.INTERP}}
+
   clean:
     desc: Remove generated files and binaries
     cmds:
-      - rm -rf {{.BIN}} build
+      - rm -rf {{.BIN}} {{.INTERP}} build
