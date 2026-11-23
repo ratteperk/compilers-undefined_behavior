@@ -24,13 +24,14 @@ bool SemanticAnalyzer::isBuiltin(const std::string& name) {
     static const std::unordered_set<std::string> b = {
         "plus",    "minus",     "times",  "divide", "equal",  "nonequal", "less",  "lesseq",
         "greater", "greatereq", "and",    "or",     "xor",    "not",      "head",  "tail",
-        "cons",    "isint",     "isreal", "isbool", "isnull", "isatom",   "islist"};
+        "cons",    "isint",     "isreal", "isbool", "isnull", "isatom",   "islist", "eval"};
     return b.find(name) != b.end();
 }
 
 int SemanticAnalyzer::getBuiltinArity(const std::string& name) {
     if (name == "not" || name == "head" || name == "tail" || name == "isint" || name == "isreal" ||
-        name == "isbool" || name == "isnull" || name == "isatom" || name == "islist") {
+        name == "isbool" || name == "isnull" || name == "isatom" || name == "islist" ||
+        name == "eval") {
         return 1;
     }
     return 2;

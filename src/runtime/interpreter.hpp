@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct ExecResult {
@@ -29,6 +30,10 @@ private:
     static constexpr int MAX_CALL_DEPTH = 2048;
     int callDepth = 0;
 
+    // Тела функций, созданных через eval, должны жить до конца исполнения.
+    ASTContext evalAst;
+    std::unordered_map<const Node*, Value> evalConstants;
+
     void registerFunctionsInBlock(const Node* listNode, size_t startIdx,
                                   const std::shared_ptr<Env>& env);
     ClosurePtr makeClosure(const Node* formNode, const std::string& name, const Node* paramsNode,
@@ -39,7 +44,9 @@ private:
     ExecResult evalSpecialForm(const Node* node, const std::string& name,
                                const std::shared_ptr<Env>& env);
     ExecResult evalCall(const Node* node, const std::shared_ptr<Env>& env);
-    ExecResult apply(const Value& callee, const std::vector<Value>& args, int line, int col);
+    ExecResult apply(const Value& callee, const std::vector<Value>& args,
+                     const std::shared_ptr<Env>& env, int line, int col);
+    Node* valueToNode(const Value& value, int line, int col);
     Value evalQuote(const Node* node);
 
     static bool isSpecialForm(const std::string& name);

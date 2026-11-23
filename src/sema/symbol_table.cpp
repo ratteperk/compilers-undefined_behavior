@@ -6,7 +6,7 @@ SymbolTable::SymbolTable() {
     const std::vector<std::string> builtins = {
         "plus",    "minus",     "times",  "divide", "equal",  "nonequal", "less",  "lesseq",
         "greater", "greatereq", "and",    "or",     "xor",    "not",      "head",  "tail",
-        "cons",    "isint",     "isreal", "isbool", "isnull", "isatom",   "islist"};
+        "cons",    "isint",     "isreal", "isbool", "isnull", "isatom",   "islist", "eval"};
     for (const auto& b : builtins) {
         scopes.back()[b] = SymbolKind::Builtin;
     }

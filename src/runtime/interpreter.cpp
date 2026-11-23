@@ -75,6 +75,8 @@ void Interpreter::run(const Node* root, std::ostream& out) {
     if (!root) return;
 
     callDepth = 0;
+    evalConstants.clear();
+    evalAst.pool.clear();
     auto globalEnv = std::make_shared<Env>(nullptr, true);
     EnvClearGuard guard{globalEnv};
     registerBuiltins(*globalEnv);
@@ -105,6 +107,9 @@ void Interpreter::run(const Node* root, std::ostream& out) {
 }
 
 Value Interpreter::evalQuote(const Node* node) {
+    auto constant = evalConstants.find(node);
+    if (constant != evalConstants.end()) return constant->second;
+
     switch (node->kind) {
     case Kind::Int:  return Value::makeInt(node->i);
     case Kind::Real: return Value::makeReal(node->r);
@@ -120,6 +125,27 @@ Value Interpreter::evalQuote(const Node* node) {
     }
     }
     return Value::makeNull();
+}
+
+Node* Interpreter::valueToNode(const Value& value, int line, int col) {
+    if (value.isNull()) return evalAst.makeNull(line, col);
+    if (value.isInt()) return evalAst.makeInt(value.asInt(), line, col);
+    if (value.isReal()) return evalAst.makeReal(value.asReal(), line, col);
+    if (value.isBool()) return evalAst.makeBool(value.asBool(), line, col);
+    if (value.isSymbol()) return evalAst.makeAtom(value.asSymbol(), line, col);
+    if (value.isList()) {
+        std::vector<Node*> items;
+        for (ListPtr cur = value.asList(); cur; cur = cur->tail) {
+            items.push_back(valueToNode(cur->head, line, col));
+        }
+        return evalAst.makeList(std::move(items), line, col);
+    }
+
+    // cons может поместить готовую функцию в исполняемый список.
+    // Сохраняем само значение, включая захваченное окружение замыкания.
+    Node* node = evalAst.makeNull(line, col);
+    evalConstants.emplace(node, value);
+    return node;
 }
 
 ExecResult Interpreter::evalBlock(const Node* listNode, size_t startIdx,
@@ -141,6 +167,8 @@ ExecResult Interpreter::evalBlock(const Node* listNode, size_t startIdx,
 
 ExecResult Interpreter::eval(const Node* node, const std::shared_ptr<Env>& env) {
     if (!node) return ExecResult::normal();
+    auto constant = evalConstants.find(node);
+    if (constant != evalConstants.end()) return ExecResult::normal(constant->second);
 
     switch (node->kind) {
     case Kind::Int:  return ExecResult::normal(Value::makeInt(node->i));
@@ -296,17 +324,25 @@ ExecResult Interpreter::evalCall(const Node* node, const std::shared_ptr<Env>& e
         args.push_back(std::move(argRes.value));
     }
 
-    return apply(calleeRes.value, args, node->line, node->col);
+    return apply(calleeRes.value, args, env, node->line, node->col);
 }
 
-ExecResult Interpreter::apply(const Value& callee, const std::vector<Value>& args, int line,
-                              int col) {
+ExecResult Interpreter::apply(const Value& callee, const std::vector<Value>& args,
+                              const std::shared_ptr<Env>& env, int line, int col) {
     if (callee.isBuiltin()) {
         const Builtin& b = callee.asBuiltin();
         if (static_cast<int>(args.size()) != b.arity) {
             throw RuntimeError(line, col,
                                "Built-in '" + b.name + "' expects " + std::to_string(b.arity) +
                                    " arguments, got " + std::to_string(args.size()) + ".");
+        }
+        if (b.name == "eval") {
+            if (!args[0].isList()) return ExecResult::normal(args[0]);
+            if (callDepth >= MAX_CALL_DEPTH) {
+                throw RuntimeError(line, col, "Maximum call depth exceeded.");
+            }
+            CallDepthGuard depthGuard{callDepth};
+            return eval(valueToNode(args[0], line, col), env);
         }
         return ExecResult::normal(b.fn(args, line, col));
     }

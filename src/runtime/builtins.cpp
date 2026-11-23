@@ -278,4 +278,6 @@ void registerBuiltins(Env& globalEnv) {
     add("isnull", 1, fnIsNull);
     add("isatom", 1, fnIsAtom);
     add("islist", 1, fnIsList);
+    // eval требует текущее окружение и обрабатывается в Interpreter::apply.
+    add("eval", 1, nullptr);
 }
